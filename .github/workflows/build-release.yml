@@ -1,0 +1,74 @@
+name: Build release-signed comparison APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build release APK
+        run: gradle assembleRelease
+
+      - name: Sign release APK with a fresh test-only certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          STORE_PASS="$(openssl rand -hex 16)"
+          keytool -genkeypair -v \
+            -keystore /tmp/xpad-test-release.jks \
+            -storepass "$STORE_PASS" \
+            -keypass "$STORE_PASS" \
+            -alias xpadtest \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=XPad Test Release, O=Test, C=US"
+          UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
+          SIGNED="app/build/outputs/apk/release/xpad-test-release.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort | tail -n 1)"
+          "$APKSIGNER" sign \
+            --ks /tmp/xpad-test-release.jks \
+            --ks-key-alias xpadtest \
+            --ks-pass "pass:$STORE_PASS" \
+            --key-pass "pass:$STORE_PASS" \
+            --out "$SIGNED" "$UNSIGNED"
+          "$APKSIGNER" verify --verbose --print-certs "$SIGNED" | tee app/build/outputs/apk/release/signature-info.txt
+          sha256sum "$SIGNED" | tee app/build/outputs/apk/release/sha256.txt
+
+      - name: Upload release comparison APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: xpad-test-release-signed
+          path: |
+            app/build/outputs/apk/release/xpad-test-release.apk
+            app/build/outputs/apk/release/signature-info.txt
+            app/build/outputs/apk/release/sha256.txt
+          if-no-files-found: error
+          retention-days: 7
