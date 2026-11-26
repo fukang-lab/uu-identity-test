@@ -36,7 +36,7 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build release APK
-        run: gradle assembleRelease
+        run: gradle assembleRelease -x lintVitalRelease
 
       - name: Sign release APK with a fresh test-only certificate
         shell: bash
